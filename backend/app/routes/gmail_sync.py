@@ -1,7 +1,8 @@
 from fastapi import APIRouter
-from app.gmail.service import get_gmail_service,should_update_status
+from app.gmail.service import get_gmail_service
 from app.gmail.job_filter import classify_job_event, is_spam, is_allowed_sender
 from app.gmail.body_parser import extract_email_body
+from app.gmail.status_rank import should_update_status
 from app.db import supabase
 import time
 
@@ -48,10 +49,8 @@ def gmail_sync(user_id: str):
 
             internal_date = int(full["internalDate"])
             newest_internal_date = max(newest_internal_date, internal_date)
-
             thread_id = full["threadId"]
 
-            # 2️⃣ Extract headers
             subject = ""
             sender = ""
 
@@ -61,7 +60,7 @@ def gmail_sync(user_id: str):
                 elif h["name"] == "From":
                     sender = h["value"]
 
-            # 3️⃣ Hard spam filter
+            # Spam filter
             if is_spam(subject) and not is_allowed_sender(sender):
                 continue
 
@@ -71,7 +70,6 @@ def gmail_sync(user_id: str):
             if status is None:
                 continue
 
-            # 4️⃣ Thread-based dedup
             existing_app = (
                 supabase.table("applications")
                 .select("id, current_status")
@@ -81,8 +79,8 @@ def gmail_sync(user_id: str):
             )
 
             if not existing_app:
-                # 5️⃣ Insert new application
-                supabase.table("applications").insert({
+                # ✅ New application
+                app_res = supabase.table("applications").insert({
                     "user_id": user_id,
                     "gmail_thread_id": thread_id,
                     "gmail_message_id": msg["id"],
@@ -95,18 +93,31 @@ def gmail_sync(user_id: str):
                     "source": "gmail"
                 }).execute()
 
+                application_id = app_res.data[0]["id"]
                 inserted_count += 1
 
             else:
-                # 6️⃣ Update existing application
+                # ✅ Existing application
+                application_id = existing_app[0]["id"]
                 current_status = existing_app[0]["current_status"]
 
                 if should_update_status(current_status, status):
                     supabase.table("applications").update({
                         "current_status": status,
                         "last_event_at": internal_date
-                    }).eq("gmail_thread_id", thread_id).execute()
+                    }).eq("id", application_id).execute()
 
+            # 🔥 ALWAYS insert timeline event
+            supabase.table("application_events").insert({
+                "application_id": application_id,
+                "gmail_message_id": msg["id"],
+                "gmail_thread_id": thread_id,
+                "event_type": status,
+                "subject": subject,
+                "sender": sender,
+                "occurred_at": internal_date,
+                "source": "gmail"
+            }).execute()
 
         page_token = res.get("nextPageToken")
         if not page_token:
