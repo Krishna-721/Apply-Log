@@ -13,5 +13,9 @@ GMAIL_CLIENT_ID = os.getenv("GMAIL_CLIENT_ID")
 GMAIL_CLIENT_SECRET = os.getenv("GMAIL_CLIENT_SECRET")
 GMAIL_REDIRECT_URI = "http://127.0.0.1:8000/auth/gmail/callback"
 
+CRON_SECRET= os.getenv("CRON_SECRET")
+if not CRON_SECRET:
+    raise RuntimeError("CRON_SECRET not set")
+
 if not GMAIL_CLIENT_ID or not GMAIL_CLIENT_SECRET:
     raise RuntimeError("Gmail OAuth env vars not set")
